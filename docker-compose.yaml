@@ -1,0 +1,10 @@
+services:
+  lycan-agent:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: lycan-agent
+    restart: unless-stopped
+    # network_mode: host # Permite al agente tener visibilidad total de la red local en Linux para escanear IPs privadas.
+    env_file:
+      - .env

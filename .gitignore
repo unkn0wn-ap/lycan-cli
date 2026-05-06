@@ -1,0 +1,15 @@
+# Lycan CLI - Git ignore
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+env.bak/
+venv.bak/
+*.log
+*.sqlite
+.lycan/
