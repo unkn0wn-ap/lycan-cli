@@ -36,6 +36,8 @@ from urllib.parse import quote, urlparse
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import requests
+from packaging import version
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError
 from supabase import Client, create_client
@@ -52,6 +54,42 @@ try:
     _HAS_NETIFACES = True
 except ImportError:
     _HAS_NETIFACES = False
+
+
+__version__ = "1.0.0"
+REPO_URL = "https://api.github.com/repos/unkn0wn-ap/lycan-cli/releases/latest"
+
+def check_for_updates(silent=True) -> Optional[str]:
+    """Consulta la API de GitHub para verificar nuevas versiones"""
+    try:
+        response = requests.get(REPO_URL, timeout=5)
+        if response.status_code == 200:
+            latest_release = response.json()
+            remote_version = latest_release.get('tag_name', '').replace('v', '')
+            
+            if remote_version and version.parse(remote_version) > version.parse(__version__):
+                if silent:
+                    print(f"\n[!] Nueva versión disponible: v{remote_version}. Ejecute 'lycan update' para actualizar.")
+                return remote_version
+    except Exception:
+        pass # En modo inicio, fallar silenciosamente para no molestar al operador
+    return None
+
+def exec_update() -> None:
+    """Lógica de Upgrade: Descarga e instala la nueva versión"""
+    print("[*] Iniciando actualización de Lycan Agent...")
+    try:
+        # 1. Instalar la nueva versión vía pip desde el repo público
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "git+https://github.com/unkn0wn-ap/lycan-cli.git"])
+        
+        print("[SUCCESS] Paquete actualizado correctamente.")
+        print("[*] Verificando integridad del nuevo binario y reiniciando...")
+        
+        # 2. Auto-reinicio: Reemplaza el proceso actual con la nueva versión
+        os.execv(sys.executable, ['python', '-m', 'agent'] + sys.argv[1:])
+    except Exception as e:
+        print(f"[ERROR] Fallo en la actualización: {e}")
+        print("[!] Por favor, intente de forma manual: pip install --upgrade git+https://github.com/unkn0wn-ap/lycan-cli.git")
 
 
 # ─── Config file: ~/.lycan/config.json ─────────────────────────────────────────────────
@@ -1340,6 +1378,9 @@ def run(cli_args: Optional[argparse.Namespace] = None) -> None:
     load_dotenv()
     load_config()  # inject ~/.lycan/config.json into os.environ (lowest priority)
 
+    # Check for updates silently on startup
+    check_for_updates(silent=True)
+
     # CLI flags override everything else
     if cli_args is not None:
         if getattr(cli_args, "key", None):
@@ -1469,6 +1510,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "  lycan start --key <API_KEY>        # override API key\n"
             "  lycan start --name my-node --verbose\n"
             "  lycan install-deps                 # install nmap + sqlmap\n"
+            "  lycan update                       # update agent via Hot-Reload\n"
             "  lycan config                       # show active configuration\n"
         ),
     )
@@ -1479,6 +1521,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # —— setup ——————————————————————————————————————————————
     sub.add_parser("setup", help="Interactive configuration setup")
+
+    # —— update —————————————————————————————————————————————
+    sub.add_parser("update", help="Actualiza el agente a la última versión (Hot-Reload)")
 
     # —— start ——————————————————————————————————————————————
     start_p = sub.add_parser("start", help="Start the scan agent")
@@ -1586,13 +1631,15 @@ def cmd_config() -> None:
 def main() -> None:
     """
     Entry point registered by setup.py as the 'lycan' console_script.
-    Dispatches subcommands: start | install-deps | config | setup
+    Dispatches subcommands: start | install-deps | config | setup | update
     """
     parser = build_arg_parser()
     args = parser.parse_args()
 
     if getattr(args, "setup", False) or args.command == "setup":
         cmd_setup()
+    elif args.command == "update":
+        exec_update()
     elif args.command == "start":
         run(cli_args=args)
     elif args.command == "install-deps":

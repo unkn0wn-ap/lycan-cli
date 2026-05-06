@@ -28,6 +28,7 @@ setup(
         "netifaces>=0.11.0",
         "requests>=2.32.0",
         "rich>=13.7.0",
+        "packaging>=23.0",
     ],
     extras_require={
         "dev": ["pytest", "black", "ruff"],
