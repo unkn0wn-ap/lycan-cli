@@ -478,29 +478,21 @@ def build_client(settings: Settings) -> Client:
 
 
 def resolve_user_id(client: Client, api_key: str) -> str:
-    resp = (
-        client.table("profiles")
-        .select("id")
-        .eq("api_key", api_key)
-        .limit(1)
-        .execute()
-    )
+    resp = client.rpc("agent_resolve_user", {"p_api_key": api_key}).execute()
     if not resp.data:
         raise RuntimeError("Unable to resolve user_id from LYCAN_API_KEY.")
-    return resp.data[0]["id"]
+    return resp.data
 
 
-def upsert_agent_state(client: Client, user_id: str, worker_id: str, version: str, status: str) -> None:
-    payload = {
-        "user_id": user_id,
-        "worker_id": worker_id,
-        "last_seen": now_iso(),
-        "status": status,
-        "version": version,
-        "public_ip": get_public_ip(),
-        "metadata": get_local_context(),
-    }
-    client.table("agents").upsert(payload, on_conflict="user_id,worker_id").execute()
+def upsert_agent_state(client: Client, api_key: str, worker_id: str, version: str, status: str) -> None:
+    client.rpc("agent_heartbeat", {
+        "p_api_key": api_key,
+        "p_worker_id": worker_id,
+        "p_version": version,
+        "p_status": status,
+        "p_public_ip": get_public_ip(),
+        "p_metadata": get_local_context(),
+    }).execute()
 
 
 def update_agent_error_status(
@@ -513,7 +505,7 @@ def update_agent_error_status(
     if not user_id:
         logging.error("Cannot persist agent error state without user_id: %s", error_message)
         return
-    upsert_agent_state(client, user_id, worker_id, version, f"Error: {error_message}")
+    upsert_agent_state(client, os.getenv("LYCAN_API_KEY", ""), worker_id, version, f"Error: {error_message}")
 
 
 def verify_environment(client: Client, settings: Settings, user_id: Optional[str]) -> str:
@@ -1041,7 +1033,7 @@ def send_heartbeat(
 ) -> None:
     while not stop_event.is_set():
         try:
-            upsert_agent_state(client, user_id, worker_id, version, "online")
+            upsert_agent_state(client, os.getenv("LYCAN_API_KEY", ""), worker_id, version, "online")
             logging.info("Heartbeat sent | worker_id=%s", worker_id)
             _agent_console.log_heartbeat(worker_id)
         except Exception as exc:
@@ -1051,38 +1043,12 @@ def send_heartbeat(
         stop_event.wait(interval_seconds)
 
 
-def claim_pending_job(client: Client, user_id: str, worker_id: str) -> Optional[Dict[str, Any]]:
-    jobs_resp = (
-        client.table("scan_jobs")
-        .select("id, scan_id, user_id, domain_id, status, modules")
-        .eq("status", "pending")
-        .eq("user_id", user_id)
-        .order("created_at", desc=False)
-        .limit(1)
-        .execute()
-    )
-    if not jobs_resp.data:
-        return None
-
-    job = jobs_resp.data[0]
-    claim_resp = (
-        client.table("scan_jobs")
-        .update(
-            {
-                "status": "processing",
-                "worker_id": worker_id,
-            }
-        )
-        .eq("id", job["id"])
-        .eq("status", "pending")
-        .eq("user_id", user_id)
-        .select("id, scan_id, user_id, domain_id, status, modules")
-        .execute()
-    )
-
-    if not claim_resp.data:
-        return None
-    return claim_resp.data[0]
+def claim_pending_job(client: Client, api_key: str, worker_id: str) -> Optional[Dict[str, Any]]:
+    resp = client.rpc("agent_claim_job", {
+        "p_api_key": api_key,
+        "p_worker_id": worker_id
+    }).execute()
+    return resp.data
 
 
 def get_target_for_scan(client: Client, job: Dict[str, Any]) -> str:
@@ -1321,7 +1287,7 @@ def _dispatch_job_safe(
 ) -> None:
     """Claim the oldest pending job and dispatch it to the thread pool."""
     try:
-        job = claim_pending_job(client, user_id, settings.worker_id)
+        job = claim_pending_job(client, settings.lycan_api_key, settings.worker_id)
         if job:
             logging.info("Realtime trigger: dispatching job=%s", job.get("id"))
             executor.submit(process_job, client, settings, job)
@@ -1331,7 +1297,7 @@ def _dispatch_job_safe(
         logging.exception("Error during realtime job dispatch: %s", exc)
 
 
-def start_realtime_listener(
+def start_polling_loop(
     client: Client,
     settings: Settings,
     user_id: str,
@@ -1339,47 +1305,15 @@ def start_realtime_listener(
     executor: ThreadPoolExecutor,
 ) -> None:
     """
-    Subscribe to Supabase Realtime for INSERT events on scan_jobs
-    filtered by the current user's user_id and status='pending'.
-    Runs in its own daemon thread.
+    Poll for pending scan_jobs. Replaces Realtime for BYOI agents.
     """
-    channel_name = f"agent-jobs-{user_id[:8]}"
-
-    def _on_insert(payload: Dict[str, Any]) -> None:
-        record = payload.get("record") or payload.get("new") or {}
-        if str(record.get("user_id", "")) == user_id and record.get("status") == "pending":
-            logging.info("Realtime INSERT received for scan_job=%s", record.get("id"))
-            _dispatch_job_safe(client, settings, user_id, executor)
-
-    try:
-        channel = (
-            client.channel(channel_name)
-            .on_postgres_changes(
-                event="INSERT",
-                schema="public",
-                table="scan_jobs",
-                filter=f"user_id=eq.{user_id}",
-                callback=_on_insert,
-            )
-            .subscribe()
-        )
-        logging.info("Realtime subscription active on channel '%s'", channel_name)
-
-        # Keep the subscription alive until stop_event is set
-        while not stop_event.is_set():
-            stop_event.wait(timeout=5)
-
-        # Graceful unsubscribe
+    logging.info("Agent polling loop started (interval: %ss)", settings.poll_interval_seconds)
+    while not stop_event.is_set():
         try:
-            client.remove_channel(channel)
-            logging.info("Realtime channel '%s' removed.", channel_name)
+            _dispatch_job_safe(client, settings, user_id, executor)
         except Exception as exc:
-            logging.warning("Error removing realtime channel: %s", exc)
-
-    except Exception as exc:
-        logging.exception("Realtime listener failed: %s", exc)
-        # Signal the main thread to shut down if realtime is unrecoverable
-        stop_event.set()
+            logging.error("Polling error: %s", exc)
+        stop_event.wait(timeout=settings.poll_interval_seconds)
 
 
 def run(cli_args: Optional[argparse.Namespace] = None) -> None:
@@ -1447,7 +1381,7 @@ def run(cli_args: Optional[argparse.Namespace] = None) -> None:
         raise SystemExit(1) from exc
 
     try:
-        upsert_agent_state(client, user_id, settings.worker_id, settings.agent_version, "online")
+        upsert_agent_state(client, settings.lycan_api_key, settings.worker_id, settings.agent_version, "online")
     except Exception as exc:
         logging.warning("Initial online state update failed: %s", exc)
 
@@ -1477,14 +1411,14 @@ def run(cli_args: Optional[argparse.Namespace] = None) -> None:
     )
     heartbeat_thread.start()
 
-    # Realtime listener thread — replaces the polling while loop
-    realtime_thread = threading.Thread(
-        target=start_realtime_listener,
+    # Polling loop thread — replaces the realtime listener for BYOI agents
+    polling_thread = threading.Thread(
+        target=start_polling_loop,
         args=(client, settings, user_id, stop_event, executor),
         daemon=True,
-        name="realtime-thread",
+        name="polling-thread",
     )
-    realtime_thread.start()
+    polling_thread.start()
 
     # Drain any jobs that arrived before the agent started (startup catch-up)
     _dispatch_job_safe(client, settings, user_id, executor)
@@ -1496,9 +1430,9 @@ def run(cli_args: Optional[argparse.Namespace] = None) -> None:
         stop_event.set()
         executor.shutdown(wait=True, cancel_futures=False)
         heartbeat_thread.join(timeout=5)
-        realtime_thread.join(timeout=5)
+        polling_thread.join(timeout=5)
         try:
-            upsert_agent_state(client, user_id, settings.worker_id, settings.agent_version, "offline")
+            upsert_agent_state(client, settings.lycan_api_key, settings.worker_id, settings.agent_version, "offline")
             logging.info("Agent marked offline.")
         except Exception as exc:
             logging.warning("Failed to mark agent offline: %s", exc)
