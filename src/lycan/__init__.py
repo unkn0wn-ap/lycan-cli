@@ -147,7 +147,7 @@ class Settings(BaseModel):
     heartbeat_interval_seconds: int = Field(default_factory=lambda: int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "60")))
     nmap_timeout_seconds: int = Field(default_factory=lambda: int(os.getenv("NMAP_TIMEOUT_SECONDS", "600")))
     worker_id: str = Field(default_factory=lambda: os.getenv("WORKER_ID", platform.node() or f"{socket.gethostname()}-{os.getpid()}"))
-    agent_version: str = Field(default_factory=lambda: os.getenv("AGENT_VERSION", "1.0.0"))
+    agent_version: str = Field(default_factory=lambda: os.getenv("AGENT_VERSION", "1.1.0"))
     request_timeout_seconds: int = Field(default_factory=lambda: int(os.getenv("REQUEST_TIMEOUT_SECONDS", "8")))
     agent_mode: str = Field(default_factory=lambda: os.getenv("AGENT_MODE", "VERBOSE").upper())
 
@@ -463,15 +463,18 @@ def build_client(settings: Settings) -> Client:
     if not settings.lycan_api_key:
         raise RuntimeError("LYCAN_API_KEY is required.")
 
+    # Create options and set headers manually to avoid 'storage' attribute issues
+    # in some versions of supabase-py ClientOptions constructor
+    opts = ClientOptions()
+    opts.headers.update({
+        "x-agent-api-key": settings.lycan_api_key,
+        "x-client-info": f"lycan-local-agent/{settings.agent_version}",
+    })
+
     return create_client(
         settings.supabase_url,
         settings.supabase_anon_key,
-        options=ClientOptions(
-            headers={
-                "x-agent-api-key": settings.lycan_api_key,
-                "x-client-info": "lycan-local-agent/1.1",
-            }
-        ),
+        options=opts
     )
 
 
@@ -1404,7 +1407,7 @@ def run(cli_args: Optional[argparse.Namespace] = None) -> None:
         raise SystemExit(1) from exc
 
     if not settings.lycan_api_key:
-        print("Error: Use lycan --setup para configurar su API Key", file=sys.stderr)
+        print("Error: Use 'lycan setup' to configure your API Key", file=sys.stderr)
         raise SystemExit(1)
 
     setup_logging(settings.agent_mode)
