@@ -26,10 +26,10 @@ error()   { echo -e "${RED}[✗]${NC} $*"; exit 1; }
 SUDO=()
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     if command -v sudo &>/dev/null; then
-        SUDO=(sudo -E)
+        SUDO=(sudo)
         if [ -r /dev/tty ]; then
             info "Requesting administrator privileges..."
-            sudo -E -v < /dev/tty || error "Unable to acquire sudo privileges."
+            sudo -v < /dev/tty || error "Unable to acquire sudo privileges."
         else
             warn "No TTY available for sudo prompt."
         fi
