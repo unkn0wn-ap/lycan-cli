@@ -56,11 +56,11 @@ except ImportError:
     _HAS_NETIFACES = False
 
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 REPO_URL = "https://api.github.com/repos/unkn0wn-ap/lycan-cli/releases/latest"
 
 def check_for_updates(silent=True) -> Optional[str]:
-    """Consulta la API de GitHub para verificar nuevas versiones"""
+    """Check GitHub API for new versions"""
     try:
         response = requests.get(REPO_URL, timeout=5)
         if response.status_code == 200:
@@ -68,28 +68,34 @@ def check_for_updates(silent=True) -> Optional[str]:
             remote_version = latest_release.get('tag_name', '').replace('v', '')
             
             if remote_version and version.parse(remote_version) > version.parse(__version__):
-                if silent:
-                    print(f"\n[!] Nueva versión disponible: v{remote_version}. Ejecute 'lycan update' para actualizar.")
+                print(f"\n[!] New version available: v{remote_version}. Run 'lycan update' to upgrade.")
                 return remote_version
     except Exception:
-        pass # En modo inicio, fallar silenciosamente para no molestar al operador
+        pass 
     return None
 
 def exec_update() -> None:
-    """Lógica de Upgrade: Descarga e instala la nueva versión"""
-    print("[*] Iniciando actualización de Lycan Agent...")
+    """Upgrade logic: Download and install the new version from GitHub"""
+    print("[*] Starting Lycan Agent update...")
     try:
-        # 1. Instalar la nueva versión vía pip desde el repo público
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "git+https://github.com/unkn0wn-ap/lycan-cli.git"])
+        # 1. Re-run the install script directly from GitHub
+        install_url = "https://raw.githubusercontent.com/unkn0wn-ap/lycan-cli/main/install.sh"
+        cmd = f"curl -sSL {install_url} | bash"
+        subprocess.check_call(cmd, shell=True)
         
-        print("[SUCCESS] Paquete actualizado correctamente.")
-        print("[*] Verificando integridad del nuevo binario y reiniciando...")
+        print("[\u2713] Package updated successfully.")
         
-        # 2. Auto-reinicio: Reemplaza el proceso actual con la nueva versión
-        os.execv(sys.executable, ['python', '-m', 'agent'] + sys.argv[1:])
+        # 2. Attempt to restart or exit
+        lycan_bin = shutil.which("lycan")
+        if lycan_bin:
+            print("[*] Restarting...")
+            os.execv(lycan_bin, ['lycan'] + sys.argv[1:])
+        else:
+            print("[!] Update complete. Please restart the agent manually.")
+            sys.exit(0)
     except Exception as e:
-        print(f"[ERROR] Fallo en la actualización: {e}")
-        print("[!] Por favor, intente de forma manual: pip install --upgrade git+https://github.com/unkn0wn-ap/lycan-cli.git")
+        print(f"[ERROR] Update failed: {e}")
+        print("[!] Please try manual update: curl -sSL https://raw.githubusercontent.com/unkn0wn-ap/lycan-cli/main/install.sh | bash")
 
 
 # ─── Config file: ~/.lycan/config.json ─────────────────────────────────────────────────
@@ -1597,25 +1603,32 @@ def cmd_install_deps() -> None:
 
 
 def cmd_config() -> None:
-    """Print the merged configuration (env > config file), masking secrets."""
+    """Print the merged configuration (env > config file > defaults), masking secrets."""
     load_dotenv()
     load_config()
+
+    try:
+        settings = Settings()
+    except Exception as e:
+        print(f"[ERROR] Could not load settings: {e}")
+        return
 
     def mask(val: str) -> str:
         return (val[:4] + "*" * (len(val) - 4)) if len(val) > 8 else "****"
 
     rows = {
-        "API Key":      mask(os.getenv("LYCAN_API_KEY", "")) or "(not set)",
-        "Supabase URL": os.getenv("SUPABASE_URL", "(not set)"),
-        "Worker ID":    os.getenv("WORKER_ID", "(auto)"),
-        "Agent Mode":   os.getenv("AGENT_MODE", "VERBOSE"),
-        "Heartbeat":    f"{os.getenv('HEARTBEAT_INTERVAL_SECONDS', '60')}s",
-        "Config file":  str(_CONFIG_PATH) + (" ✓" if _CONFIG_PATH.exists() else " (missing)"),
+        "API Key":      mask(settings.lycan_api_key) if settings.lycan_api_key else "(not set)",
+        "Supabase URL": settings.supabase_url or "(not set)",
+        "Worker ID":    settings.worker_id,
+        "Agent Mode":   settings.agent_mode,
+        "Heartbeat":    f"{settings.heartbeat_interval_seconds}s",
+        "Version":      settings.agent_version,
+        "Config file":  str(_CONFIG_PATH) + (" \u2713" if _CONFIG_PATH.exists() else " (missing)"),
     }
 
     con = Console()
     tbl = Table(
-        title="[bold cyan]Lycan Agent — Active Configuration[/bold cyan]",
+        title="[bold cyan]Lycan Agent \u2014 Active Configuration[/bold cyan]",
         box=box.ROUNDED,
         border_style="cyan",
         show_header=True,
@@ -1624,7 +1637,7 @@ def cmd_config() -> None:
     tbl.add_column("Setting", style="cyan", no_wrap=True)
     tbl.add_column("Value", style="white")
     for k, v in rows.items():
-        tbl.add_row(k, v)
+        tbl.add_row(k, str(v))
     con.print(tbl)
 
 
