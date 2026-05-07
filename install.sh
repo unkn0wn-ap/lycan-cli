@@ -23,12 +23,16 @@ warn()    { echo -e "${YELLOW}[!]${NC} $*"; }
 error()   { echo -e "${RED}[✗]${NC} $*"; exit 1; }
 
 # ── Privileges ───────────────────────────────────────────────────────────────
-SUDO=""
+SUDO=()
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     if command -v sudo &>/dev/null; then
-        SUDO="sudo -E"
-        info "Requesting administrator privileges..."
-        ${SUDO} -v || error "Unable to acquire sudo privileges."
+        SUDO=(sudo -E)
+        if [ -r /dev/tty ]; then
+            info "Requesting administrator privileges..."
+            sudo -E -v < /dev/tty || error "Unable to acquire sudo privileges."
+        else
+            warn "No TTY available for sudo prompt."
+        fi
     else
         error "Administrator privileges are required (sudo not found)."
     fi
@@ -99,18 +103,18 @@ else
     else
         # Linux package managers
         if command -v apt-get &>/dev/null; then
-            ${SUDO} apt-get update -qq
-            ${SUDO} apt-get install -y --no-install-recommends \
+            "${SUDO[@]}" apt-get update -qq
+            "${SUDO[@]}" apt-get install -y --no-install-recommends \
                 "${missing_tools[@]}" \
                 iputils-ping \
                 ca-certificates \
                 2>/dev/null
             success "System packages installed via apt."
         elif command -v dnf &>/dev/null; then
-            ${SUDO} dnf install -y "${missing_tools[@]}" 2>/dev/null
+            "${SUDO[@]}" dnf install -y "${missing_tools[@]}" 2>/dev/null
             success "System packages installed via dnf."
         elif command -v pacman &>/dev/null; then
-            ${SUDO} pacman -Sy --noconfirm "${missing_tools[@]}" 2>/dev/null
+            "${SUDO[@]}" pacman -Sy --noconfirm "${missing_tools[@]}" 2>/dev/null
             success "System packages installed via pacman."
         else
             warn "Unsupported package manager. Install ${missing_tools[*]} manually."
