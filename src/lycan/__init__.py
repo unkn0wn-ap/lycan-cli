@@ -484,14 +484,17 @@ def resolve_user_id(client: Client, api_key: str) -> str:
     return resp.data
 
 
-def upsert_agent_state(client: Client, api_key: str, worker_id: str, version: str, status: str) -> None:
+def upsert_agent_state(client: Client, api_key: str, worker_id: str, version: str, status: str, error: Optional[str] = None) -> None:
+    metadata = get_local_context()
+    if error:
+        metadata["error"] = error
     client.rpc("agent_heartbeat", {
         "p_api_key": api_key,
         "p_worker_id": worker_id,
         "p_version": version,
         "p_status": status,
         "p_public_ip": get_public_ip(),
-        "p_metadata": get_local_context(),
+        "p_metadata": metadata,
     }).execute()
 
 
@@ -505,7 +508,7 @@ def update_agent_error_status(
     if not user_id:
         logging.error("Cannot persist agent error state without user_id: %s", error_message)
         return
-    upsert_agent_state(client, os.getenv("LYCAN_API_KEY", ""), worker_id, version, f"Error: {error_message}")
+    upsert_agent_state(client, os.getenv("LYCAN_API_KEY", ""), worker_id, version, "error", error=error_message)
 
 
 def verify_environment(client: Client, settings: Settings, user_id: Optional[str]) -> str:
