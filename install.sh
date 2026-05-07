@@ -163,8 +163,13 @@ fi
 [ -n "$SCRIPT_DIR" ] || error "Unable to determine installation directory."
 info "Installing lycan-security-agent from: ${SCRIPT_DIR}"
 
-python3 -m pip install --upgrade pip --quiet
-python3 -m pip install -e "${SCRIPT_DIR}" --quiet
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+    # System-wide install if running as root
+    python3 -m pip install "${SCRIPT_DIR}" --quiet --break-system-packages 2>/dev/null || python3 -m pip install "${SCRIPT_DIR}" --quiet
+else
+    # User-local install
+    python3 -m pip install --user "${SCRIPT_DIR}" --quiet --break-system-packages 2>/dev/null || python3 -m pip install --user "${SCRIPT_DIR}" --quiet
+fi
 
 # Verificar que el entry-point quedó registrado
 if command -v lycan &>/dev/null; then

@@ -19,8 +19,8 @@ setup(
     long_description_content_type="text/markdown",
     author="Lycan Security",
     python_requires=">=3.10",
-    # The agent is a single-file module; we expose it directly
-    py_modules=["agent"],
+    package_dir={"": "src"},
+    packages=find_packages(where="src"),
     install_requires=[
         "supabase>=2.5.0",
         "python-dotenv>=1.0.1",
@@ -35,8 +35,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            # `lycan` command → agent.main()
-            "lycan = agent:main",
+            "lycan = lycan:main",
         ],
     },
     classifiers=[
