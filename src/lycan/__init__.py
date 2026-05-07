@@ -40,8 +40,7 @@ import requests
 from packaging import version
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError
-from supabase import Client, create_client
-from supabase.lib.client_options import ClientOptions
+from supabase import Client, create_client, ClientOptions
 from rich.console import Console
 from rich.text import Text
 from rich.rule import Rule
@@ -88,8 +87,8 @@ def exec_update() -> None:
         # 2. Attempt to restart or exit
         lycan_bin = shutil.which("lycan")
         if lycan_bin:
-            print("[*] Restarting...")
-            os.execv(lycan_bin, ['lycan'] + sys.argv[1:])
+            print("[*] Restarting agent...")
+            os.execv(lycan_bin, ['lycan', 'start'])
         else:
             print("[!] Update complete. Please restart the agent manually.")
             sys.exit(0)
