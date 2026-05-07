@@ -41,11 +41,11 @@ fi
 # ── Banner ────────────────────────────────────────────────────────────────────
 echo -e "${BOLD}"
 cat << 'EOF'
- _      _   _  ____   _   _   ____   _____   ____   _   _   ____    _____   _____  __   __
-| |    | | | ||  _ \ | \ | | / ___| | ____| / ___| | | | | / ___|  |_   _| | ____| \ \ / /
-| |    | | | || |_) ||  \| | \___ \ |  _|   \___ \ | | | | \___ \    | |   |  _|    \ V /
-| |___ | |_| ||  __/ | |\  |  ___) || |___   ___) || |_| |  ___) |   | |   | |___    | |
-|_____| \___/ |_|    |_| \_| |____/ |_____| |____/  \___/  |____/    |_|   |_____|   |_|
+ _      __     __   ____   _   _   ____   _____   ____   _   _   ____    ____   _____  __   __
+| |     \ \   / /  / ___| | \ | | / ___| | ____| / ___| | | | | / ___|  / ___| |_   _| \ \ / /
+| |      \ \ / /  | |     |  \| | \___ \ |  _|   \___ \ | | | | \___ \ | |       | |    \ V /
+| |___    \ V /   | |___  | |\  |  ___) || |___   ___) || |_| |  ___) || |___    | |     | |
+|_____|    \_/     \____| |_| \_| |____/ |_____| |____/  \___/  |____/  \____|   |_|     |_|
 
   Agent Installer v1.1.0
 EOF
@@ -67,8 +67,22 @@ fi
 # ── 2. Verify pip ─────────────────────────────────────────────────────────────
 info "Checking pip..."
 if ! python3 -m pip --version &>/dev/null; then
-    warn "pip not found. Attempting to install..."
-    python3 -m ensurepip --upgrade || error "Failed to install pip."
+    warn "pip not found. Installing via system package manager..."
+    if command -v apt-get &>/dev/null; then
+        "${SUDO[@]}" apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive "${SUDO[@]}" apt-get install -y python3-pip 2>/dev/null
+    elif command -v dnf &>/dev/null; then
+        "${SUDO[@]}" dnf install -y python3-pip 2>/dev/null
+    elif command -v pacman &>/dev/null; then
+        "${SUDO[@]}" pacman -Sy --noconfirm python-pip 2>/dev/null
+    elif command -v brew &>/dev/null; then
+        brew install python 2>/dev/null
+    else
+        error "pip is required but no supported package manager was found."
+    fi
+fi
+if ! python3 -m pip --version &>/dev/null; then
+    error "pip is still unavailable after installation attempt."
 fi
 success "pip available: $(python3 -m pip --version | awk '{print $2}')"
 
