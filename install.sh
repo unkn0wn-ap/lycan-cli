@@ -22,6 +22,16 @@ success() { echo -e "${GREEN}[✓]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[!]${NC} $*"; }
 error()   { echo -e "${RED}[✗]${NC} $*"; exit 1; }
 
+# ── Privilegios ───────────────────────────────────────────────────────────────
+SUDO=""
+if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+    if command -v sudo &>/dev/null; then
+        SUDO="sudo -E"
+    else
+        error "Se requieren privilegios de administrador (sudo)."
+    fi
+fi
+
 # ── Banner ────────────────────────────────────────────────────────────────────
 echo -e "${BOLD}"
 cat << 'EOF'
@@ -74,8 +84,8 @@ if [ "$OS_NAME" = "Darwin" ]; then
 else
     # Linux package managers
     if command -v apt-get &>/dev/null; then
-        apt-get update -qq
-        apt-get install -y --no-install-recommends \
+        ${SUDO} apt-get update -qq
+        ${SUDO} apt-get install -y --no-install-recommends \
             nmap \
             sqlmap \
             curl \
@@ -84,10 +94,10 @@ else
             2>/dev/null
         success "Paquetes del sistema instalados via apt"
     elif command -v dnf &>/dev/null; then
-        dnf install -y nmap sqlmap curl 2>/dev/null
+        ${SUDO} dnf install -y nmap sqlmap curl 2>/dev/null
         success "Paquetes del sistema instalados via dnf"
     elif command -v pacman &>/dev/null; then
-        pacman -Sy --noconfirm nmap sqlmap curl 2>/dev/null
+        ${SUDO} pacman -Sy --noconfirm nmap sqlmap curl 2>/dev/null
         success "Paquetes del sistema instalados via pacman"
     else
         warn "Gestor de paquetes no reconocido. Instala nmap y sqlmap manualmente."
