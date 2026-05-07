@@ -1055,32 +1055,15 @@ def claim_pending_job(client: Client, api_key: str, worker_id: str) -> Optional[
 
 
 def get_target_for_scan(client: Client, job: Dict[str, Any]) -> str:
-    scan_resp = (
-        client.table("scans")
-        .select("id, target_url")
-        .eq("id", job["scan_id"])
-        .single()
-        .execute()
-    )
-    scan_row = scan_resp.data or {}
-    target = (scan_row.get("target_url") or "").strip()
+    # V2 Architecture: target_url is now resolved safely inside the agent_claim_job RPC
+    # and returned directly in the job payload, avoiding RLS visibility issues.
+    target = (job.get("target_url") or "").strip()
     if target:
         return target
-
-    if job.get("domain_id"):
-        domain_resp = (
-            client.table("domains")
-            .select("hostname")
-            .eq("id", job["domain_id"])
-            .single()
-            .execute()
-        )
-        domain_row = domain_resp.data or {}
-        domain_target = (domain_row.get("hostname") or "").strip()
-        if domain_target:
-            return domain_target
-
-    raise RuntimeError(f"No target could be resolved for scan {job['scan_id']}.")
+    
+    # If the job payload didn't include target_url, it's either an orphaned job
+    # or the RPC didn't join it properly. We throw ValueError to signify data error.
+    raise ValueError(f"Orphaned or invalid job: No target could be resolved for scan_id {job.get('scan_id')}.")
 
 
 def run_nmap(target: str, timeout_seconds: int) -> Dict[str, Any]:
@@ -1139,44 +1122,32 @@ def parse_nmap_output(output: str) -> List[Dict[str, Any]]:
 
 
 def mark_scan_running(client: Client, scan_id: str) -> None:
-    client.table("scans").update({"status": "running", "started_at": now_iso()}).eq("id", scan_id).execute()
+    # V2 Architecture: The agent_claim_job RPC already marks the scan as 'running'.
+    # No need to hit the database here.
+    pass
 
 
 def mark_success(client: Client, job_id: str, scan_id: str, result: Dict[str, Any]) -> None:
-    client.table("scans").update(
-        {
-            "status": "completed",
-            "results": result,
-            "completed_at": now_iso(),
-        }
-    ).eq("id", scan_id).execute()
-
-    client.table("scan_jobs").update(
-        {
+    client.rpc("agent_update_job", {
+        "p_api_key": os.getenv("LYCAN_API_KEY", ""),
+        "p_job_id": job_id,
+        "p_payload": {
             "status": "done",
-            "completed_at": now_iso(),
+            "results": result
         }
-    ).eq("id", job_id).execute()
+    }).execute()
 
 
 def mark_failure(client: Client, job_id: str, scan_id: str, error_message: str) -> None:
     safe_message = error_message[:1500]
-    client.table("scans").update(
-        {
+    client.rpc("agent_update_job", {
+        "p_api_key": os.getenv("LYCAN_API_KEY", ""),
+        "p_job_id": job_id,
+        "p_payload": {
             "status": "failed",
-            "error_message": safe_message,
-            "results": {"error": safe_message, "failed_at": now_iso()},
-            "completed_at": now_iso(),
+            "error": safe_message
         }
-    ).eq("id", scan_id).execute()
-
-    client.table("scan_jobs").update(
-        {
-            "status": "failed",
-            "error": safe_message,
-            "completed_at": now_iso(),
-        }
-    ).eq("id", job_id).execute()
+    }).execute()
 
 
 def report_progress(
@@ -1186,16 +1157,18 @@ def report_progress(
     pct: int,
 ) -> None:
     """
-    Write current progress to scan_jobs.progress_message.
+    Write current progress to scan_jobs.progress_message via RPC.
     Fire-and-forget: never raises so it cannot abort a scan.
     """
     try:
-        client.table("scan_jobs").update(
-            {
+        client.rpc("agent_update_job", {
+            "p_api_key": os.getenv("LYCAN_API_KEY", ""),
+            "p_job_id": job_id,
+            "p_payload": {
                 "progress_message": f"[{pct}%] Running: {module_name}",
-                "progress_pct": pct,
+                "progress_pct": pct
             }
-        ).eq("id", job_id).execute()
+        }).execute()
     except Exception as exc:
         logging.warning("report_progress failed (non-fatal): %s", exc)
 
