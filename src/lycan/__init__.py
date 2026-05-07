@@ -134,8 +134,8 @@ def save_config(data: Dict[str, Any]) -> None:
 
 
 class Settings(BaseModel):
-    supabase_url: str = Field(default_factory=lambda: os.getenv("SUPABASE_URL", ""))
-    supabase_anon_key: str = Field(default_factory=lambda: os.getenv("SUPABASE_ANON_KEY", ""))
+    supabase_url: str = Field(default_factory=lambda: os.getenv("SUPABASE_URL", "https://yjudriersfjxayinzpng.supabase.co"))
+    supabase_anon_key: str = Field(default_factory=lambda: os.getenv("SUPABASE_ANON_KEY", "sb_publishable_Yoy8N4jPqC-Etc0gmm8r9g_0ipwfiBJ"))
     lycan_api_key: str = Field(default_factory=lambda: os.getenv("LYCAN_API_KEY", ""))
     poll_interval_seconds: int = Field(default_factory=lambda: int(os.getenv("AGENT_POLL_INTERVAL", "10")))
     heartbeat_interval_seconds: int = Field(default_factory=lambda: int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "60")))
